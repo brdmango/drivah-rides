@@ -142,6 +142,19 @@ To publish it: **Settings → Pages**, set the source to the branch holding
 `docs/`, folder `/docs`, and save. The site appears at
 `https://<user>.github.io/drivah-rides/`.
 
+### Netlify
+
+Push the repo, then in Netlify: **Add new site → Import an existing project**,
+pick this repo, and deploy. `netlify.toml` already supplies the build command,
+publish directory, SPA rewrite, cache headers and CSP, so nothing needs filling
+in by hand.
+
+With no environment variables set the deploy ships demo mode — which is what you
+want for a link you hand to people. To point it at real data, add
+`VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` under **Site configuration →
+Environment variables** and redeploy; Vite inlines them at build time, so a
+restart alone will not pick them up.
+
 ### Vercel (live Supabase data)
 
 ```bash
