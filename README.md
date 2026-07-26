@@ -125,13 +125,31 @@ drivah/
 
 ---
 
-## Deploy to Vercel
+## Deploy
+
+### GitHub Pages (no accounts, no build server)
+
+```bash
+npm run build:standalone
+```
+
+Bundles the whole app — JavaScript and fonts included — into a single
+`docs/index.html` with no external requests. It runs from a web server, from a
+USB stick, or by double-clicking the file offline, and always uses demo mode,
+since a public page has no business holding Supabase credentials.
+
+To publish it: **Settings → Pages**, set the source to the branch holding
+`docs/`, folder `/docs`, and save. The site appears at
+`https://<user>.github.io/drivah-rides/`.
+
+### Vercel (live Supabase data)
 
 ```bash
 npm run build
 ```
 
-Or connect your GitHub repo to Vercel and add your environment variables in the Vercel dashboard. Deploys automatically on every push.
+Or connect the repo to Vercel and add your environment variables in the
+dashboard. Deploys automatically on every push.
 
 ---
 
