@@ -30,7 +30,8 @@ export const demoTrips = [
     depart_at: days(2), seats_total: 4, seats_taken: 4,
     distance_miles: 132, cost_per_seat: 6.93, is_recurring: false, detour_ok: true,
     note: 'Trunk space is tight, one bag each.',
-    status: 'active', created_at: hours(-30), bookings: [{ count: 4 }],
+    // Sold out, so status matches the invariant join_trip maintains.
+    status: 'full', created_at: hours(-30), bookings: [{ count: 4 }],
   },
   {
     id: 't4', driver_id: DEMO_USER_ID, driver_name: 'Demo Driver', driver_rating: 5.0, driver_rides: 8,
@@ -51,12 +52,7 @@ export const demoTrips = [
 ]
 
 export const demoProfiles = [
-  {
-    id: DEMO_USER_ID, email: 'demo@ufl.edu', full_name: 'Demo Gator', role: 'rider',
-    rating: 5.0, total_rides: 3,
-    car_make: 'Toyota', car_model: 'Corolla', car_year: 2021, plate_number: 'GTR-2024',
-    driver_profiles: [{ car_make: 'Toyota', car_model: 'Corolla', car_year: 2021, plate_number: 'GTR-2024' }],
-  },
+  { id: DEMO_USER_ID, email: 'demo@ufl.edu', full_name: 'Demo Gator', role: 'rider', rating: 5.0, total_rides: 3 },
   { id: 'd1', email: 'maya@ufl.edu',  full_name: 'Maya Rodriguez', role: 'driver', rating: 4.9, total_rides: 42 },
   { id: 'd2', email: 'jordan@ufl.edu', full_name: 'Jordan Blake',  role: 'driver', rating: 5.0, total_rides: 17 },
   { id: 'd3', email: 'priya@ufl.edu',  full_name: 'Priya Nair',    role: 'driver', rating: 4.8, total_rides: 63 },
@@ -75,11 +71,18 @@ export const demoWallet = [
   { id: 'w1', user_id: DEMO_USER_ID, balance: 24.5, total_saved: 187.4 },
 ]
 
+// Vehicle details live here, not on profiles — same shape as the real table.
+export const demoDriverProfiles = [
+  { id: 'd1', car_make: 'Honda',  car_model: 'Civic',   car_year: 2019, plate_number: 'MRD-8821', status: 'approved' },
+  { id: 'd2', car_make: 'Subaru', car_model: 'Impreza', car_year: 2022, plate_number: 'JBL-1174', status: 'approved' },
+  { id: 'd3', car_make: 'Mazda',  car_model: 'CX-5',    car_year: 2020, plate_number: 'PNR-3390', status: 'approved' },
+]
+
 export const seedTables = () => ({
   trips:           demoTrips.map(t => ({ ...t })),
   profiles:        demoProfiles.map(p => ({ ...p })),
   bookings:        demoBookings.map(b => ({ ...b })),
   wallet:          demoWallet.map(w => ({ ...w })),
-  driver_profiles: [],
+  driver_profiles: demoDriverProfiles.map(d => ({ ...d })),
   notifications:   [],
 })

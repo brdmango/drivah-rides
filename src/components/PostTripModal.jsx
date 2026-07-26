@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { supabase } from '../supabase.js'
-import { C, CSS } from '../theme.js'
+import { C } from '../theme.js'
 import { calcCostShare, fmt$ } from '../utils.js'
 import { Input, Btn, Toast } from './UI.jsx'
 
@@ -66,7 +66,6 @@ export function PostTripModal({ profile, onClose, onPosted }) {
 
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 100, background: '#000A', display: 'flex', alignItems: 'flex-end' }}>
-      <style>{CSS}</style>
       {toast && <Toast msg={toast.msg} color={toast.c} />}
       <div className="slide" style={{ background: C.surface, borderRadius: '20px 20px 0 0', padding: '20px 20px 36px', width: '100%', maxHeight: '90vh', overflowY: 'auto', border: `1px solid ${C.border}`, fontFamily: "'DM Sans', sans-serif" }}>
 

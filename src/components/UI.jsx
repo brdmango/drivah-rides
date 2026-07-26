@@ -161,7 +161,7 @@ export const TabBar = ({ tabs, active, onChange, accentColor }) => (
   </div>
 )
 
-export const TripCard = ({ trip, onJoin, joined, isDriver, small }) => {
+export const TripCard = ({ trip, onJoin, onLeave, joined, isDriver, small }) => {
   const seatsLeft   = trip.seats_total - (trip.seats_taken || 0)
   const isRecurring = trip.is_recurring
   const isPast      = new Date(trip.depart_at) < new Date()
@@ -227,7 +227,14 @@ export const TripCard = ({ trip, onJoin, joined, isDriver, small }) => {
       {/* CTA */}
       {!isDriver && !isPast && (
         joined
-          ? <div style={{ textAlign: 'center', padding: 10, background: `${C.green}12`, border: `1px solid ${C.green}33`, borderRadius: 10, fontSize: 13, color: C.green, fontWeight: 700 }}>✓ You're on this ride</div>
+          ? <>
+              <div style={{ textAlign: 'center', padding: 10, background: `${C.green}12`, border: `1px solid ${C.green}33`, borderRadius: 10, fontSize: 13, color: C.green, fontWeight: 700 }}>✓ You're on this ride</div>
+              {onLeave && (
+                <div style={{ marginTop: 8 }}>
+                  <Btn onClick={() => onLeave(trip)} variant="red" small>Leave this ride</Btn>
+                </div>
+              )}
+            </>
           : seatsLeft > 0
             ? <Btn onClick={() => onJoin(trip)} variant="primary" small>Join Carpool · {fmt$(trip.cost_per_seat)}</Btn>
             : <div style={{ textAlign: 'center', padding: 10, background: `${C.red}10`, border: `1px solid ${C.red}22`, borderRadius: 10, fontSize: 13, color: C.red, fontWeight: 600 }}>Full — no seats left</div>

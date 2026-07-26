@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../supabase.js'
-import { C, CSS } from '../theme.js'
-import { fmt$, fmtDate, fmtTime } from '../utils.js'
+import { C } from '../theme.js'
+import { fmt$, fmtDate, fmtTime, vehicleOf } from '../utils.js'
 import { Logo, UFBadge, Tag, Btn, Toast, TabBar, TripCard } from '../components/UI.jsx'
 import { PostTripModal } from '../components/PostTripModal.jsx'
 
@@ -21,9 +21,12 @@ export function RiderApp({ profile, onLogout }) {
 
   const loadData = useCallback(async () => {
     setLoading(true)
+    // Materialise any weekly trips whose slot has passed before listing.
+    // No-op when a pg_cron job is already doing it.
+    await supabase.rpc('roll_recurring_trips')
     const [{ data: tripsData }, { data: bookingsData }, { data: walletData }] = await Promise.all([
       supabase.from('trips').select('*').eq('status', 'active').gte('depart_at', new Date().toISOString()).order('depart_at').limit(30),
-      supabase.from('bookings').select('*, trips(*)').eq('rider_id', profile.id).order('created_at', { ascending: false }),
+      supabase.from('bookings').select('*, trips(*)').eq('rider_id', profile.id).eq('status', 'confirmed').order('created_at', { ascending: false }),
       supabase.from('wallet').select('*').eq('user_id', profile.id).single(),
     ])
     if (tripsData)   setTrips(tripsData)
@@ -43,23 +46,38 @@ export function RiderApp({ profile, onLogout }) {
     return () => supabase.removeChannel(channel)
   }, [profile.id])
 
+  /* Booking goes through join_trip / leave_trip rather than direct table
+     writes: riders are not allowed to update public.trips, so maintaining
+     seats_taken client-side silently did nothing. The functions also lock
+     the trip row, closing the race on the last remaining seat. */
   const joinTrip = async (trip) => {
     try {
-      const { error } = await supabase.from('bookings').insert({ trip_id: trip.id, rider_id: profile.id, amount_paid: trip.cost_per_seat, status: 'confirmed' })
+      const { error } = await supabase.rpc('join_trip', { p_trip_id: trip.id })
       if (error) throw error
-      await supabase.from('trips').update({ seats_taken: (trip.seats_taken || 0) + 1 }).eq('id', trip.id)
       notify(`Joined! Meet ${trip.driver_name.split(' ')[0]} at ${fmtTime(trip.depart_at)} 🎉`, C.green)
       loadData()
     } catch (err) { notify(err.message || "Couldn't join trip", C.red) }
   }
 
+  const leaveTrip = async (trip) => {
+    try {
+      const { error } = await supabase.rpc('leave_trip', { p_trip_id: trip.id })
+      if (error) throw error
+      notify('You left this ride — your seat is back up for grabs', C.amber)
+      loadData()
+    } catch (err) { notify(err.message || "Couldn't leave trip", C.red) }
+  }
+
   const joinedIds = new Set(myRides.map(b => b.trip_id))
-  const filtered  = trips.filter(t => !search || t.origin.toLowerCase().includes(search.toLowerCase()) || t.destination.toLowerCase().includes(search.toLowerCase()))
+  // join_trip rejects your own trip, so don't offer it — the button would
+  // only ever produce an error toast.
+  const filtered  = trips
+    .filter(t => t.driver_id !== profile.id)
+    .filter(t => !search || t.origin.toLowerCase().includes(search.toLowerCase()) || t.destination.toLowerCase().includes(search.toLowerCase()))
   const tabs = [{ id: 'browse', icon: '🔍', lbl: 'Browse' }, { id: 'rides', icon: '🗓', lbl: 'My Rides' }, { id: 'wallet', icon: '💳', lbl: 'Wallet' }, { id: 'profile', icon: '👤', lbl: 'Profile' }]
 
   return (
     <div style={{ height: '100vh', background: C.bg, fontFamily: "'DM Sans', sans-serif", color: C.white, display: 'flex', flexDirection: 'column' }}>
-      <style>{CSS}</style>
       {toast && <Toast msg={toast.msg} color={toast.c} />}
       <div style={{ height: 3, background: `linear-gradient(90deg, ${C.uf}, ${C.blue}, ${C.blueL})`, flexShrink: 0 }} />
 
@@ -96,7 +114,7 @@ export function RiderApp({ profile, onLogout }) {
                     <div style={{ fontFamily: "'Syne', sans-serif", fontWeight: 800, fontSize: 18, color: C.white }}>No trips found</div>
                     <div style={{ fontSize: 13, color: C.sub, marginTop: 6 }}>{search ? 'Try a different search' : 'Check back soon — drivers post daily'}</div>
                   </div>
-                : filtered.map(t => <TripCard key={t.id} trip={t} onJoin={joinTrip} joined={joinedIds.has(t.id)} />)
+                : filtered.map(t => <TripCard key={t.id} trip={t} onJoin={joinTrip} onLeave={leaveTrip} joined={joinedIds.has(t.id)} />)
             }
           </div>
         )}
@@ -112,7 +130,7 @@ export function RiderApp({ profile, onLogout }) {
                   <div style={{ fontFamily: "'Syne', sans-serif", fontWeight: 800, fontSize: 18 }}>No rides yet</div>
                   <div style={{ fontSize: 13, color: C.sub, marginTop: 6 }}>Browse and join a carpool!</div>
                 </div>
-              : myRides.map(b => b.trips && <TripCard key={b.id} trip={b.trips} joined={true} />)
+              : myRides.map(b => b.trips && <TripCard key={b.id} trip={b.trips} onLeave={leaveTrip} joined={true} />)
             }
           </div>
         )}
@@ -173,9 +191,11 @@ export function DriverApp({ profile, onLogout }) {
   const [loading,  setLoading]  = useState(false)
 
   const notify = (msg, c = C.amber) => { setToast({ msg, c }); setTimeout(() => setToast(null), 3000) }
+  const vehicle = vehicleOf(profile)
 
   const loadData = useCallback(async () => {
     setLoading(true)
+    await supabase.rpc('roll_recurring_trips')
     const { data: tripsData } = await supabase.from('trips').select('*, bookings(count)').eq('driver_id', profile.id).order('depart_at', { ascending: false }).limit(20)
     if (tripsData) setMyTrips(tripsData)
 
@@ -195,9 +215,20 @@ export function DriverApp({ profile, onLogout }) {
 
   useEffect(() => { loadData() }, [loadData])
 
+  // Drivers are the ones being notified when riders join or leave.
+  useEffect(() => {
+    const channel = supabase.channel(`notifs:${profile.id}`)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${profile.id}` },
+        payload => { notify(payload.new.title, C.green); loadData() })
+      .subscribe()
+    return () => supabase.removeChannel(channel)
+  }, [profile.id, loadData])
+
   const cancelTrip = async (tripId) => {
-    await supabase.from('trips').update({ status: 'cancelled' }).eq('id', tripId)
-    notify('Trip cancelled', C.red)
+    // The on_trip_cancelled trigger notifies everyone already booked.
+    const { error } = await supabase.from('trips').update({ status: 'cancelled' }).eq('id', tripId)
+    if (error) { notify(error.message || "Couldn't cancel trip", C.red); return }
+    notify('Trip cancelled — riders have been notified', C.red)
     loadData()
   }
 
@@ -205,7 +236,6 @@ export function DriverApp({ profile, onLogout }) {
 
   return (
     <div style={{ height: '100vh', background: C.bg, fontFamily: "'DM Sans', sans-serif", color: C.white, display: 'flex', flexDirection: 'column' }}>
-      <style>{CSS}</style>
       {toast && <Toast msg={toast.msg} color={toast.c} />}
       {showPost && <PostTripModal profile={profile} onClose={() => setShowPost(false)} onPosted={loadData} />}
       <div style={{ height: 3, background: `linear-gradient(90deg, ${C.uf}, ${C.amber})`, flexShrink: 0 }} />
@@ -292,8 +322,8 @@ export function DriverApp({ profile, onLogout }) {
             <div style={{ background: C.card, borderRadius: 14, padding: 14, marginBottom: 14, border: `1px solid ${C.border}` }}>
               <div style={{ fontSize: 11, color: C.sub, fontWeight: 700, letterSpacing: 1.2, marginBottom: 10 }}>VEHICLE</div>
               {[
-                ['🚗', 'Car',   `${profile.car_year || ''} ${profile.car_make || ''} ${profile.car_model || ''}`.trim() || 'Not set'],
-                ['🪪', 'Plate', profile.plate_number || 'Not set'],
+                ['🚗', 'Car',   `${vehicle.car_year || ''} ${vehicle.car_make || ''} ${vehicle.car_model || ''}`.replace(/\s+/g, ' ').trim() || 'Not set'],
+                ['🪪', 'Plate', vehicle.plate_number || 'Not set'],
               ].map(([icon, l, v]) => (
                 <div key={l} style={{ display: 'flex', gap: 10, padding: '8px 0', borderBottom: `1px solid ${C.border}` }}>
                   <span>{icon}</span>
@@ -342,7 +372,6 @@ export function AdminPlatform({ onLogout }) {
 
   return (
     <div style={{ height: '100vh', background: '#060810', fontFamily: "'DM Sans', sans-serif", color: C.white, display: 'flex', flexDirection: 'column' }}>
-      <style>{CSS}</style>
       {toast && <Toast msg={toast.msg} color={toast.c} />}
       <div style={{ height: 3, background: 'linear-gradient(90deg, #2A1F8C, #6B5FFF, #9B8FFF)', flexShrink: 0 }} />
 

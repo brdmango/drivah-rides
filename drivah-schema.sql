@@ -3,11 +3,10 @@
 -- Run this entire file in your Supabase SQL Editor
 -- ============================================================
 
--- Enable UUID generation
 create extension if not exists "uuid-ossp";
+create extension if not exists pgcrypto;   -- server-side UFID hashing
 
 -- ─── PROFILES ───────────────────────────────────────────────
--- Created automatically via Supabase Auth trigger
 create table if not exists public.profiles (
   id            uuid primary key references auth.users(id) on delete cascade,
   full_name     text not null,
@@ -19,28 +18,6 @@ create table if not exists public.profiles (
   total_rides   integer default 0,
   created_at    timestamptz default now()
 );
-
--- Auto-create profile on signup
-create or replace function public.handle_new_user()
-returns trigger language plpgsql security definer as $$
-begin
-  insert into public.profiles (id, full_name, email, role, ufid_hash, phone)
-  values (
-    new.id,
-    coalesce(new.raw_user_meta_data->>'full_name', 'User'),
-    new.email,
-    coalesce(new.raw_user_meta_data->>'role', 'rider'),
-    new.raw_user_meta_data->>'ufid_hash',
-    new.raw_user_meta_data->>'phone'
-  );
-  return new;
-end;
-$$;
-
-drop trigger if exists on_auth_user_created on auth.users;
-create trigger on_auth_user_created
-  after insert on auth.users
-  for each row execute procedure public.handle_new_user();
 
 -- ─── DRIVER PROFILES ────────────────────────────────────────
 create table if not exists public.driver_profiles (
@@ -77,7 +54,6 @@ create table if not exists public.trips (
   created_at      timestamptz default now()
 );
 
--- Index for common queries
 create index if not exists trips_depart_at_idx on public.trips(depart_at);
 create index if not exists trips_driver_id_idx on public.trips(driver_id);
 create index if not exists trips_status_idx    on public.trips(status);
@@ -94,22 +70,9 @@ create table if not exists public.bookings (
   unique(trip_id, rider_id)  -- one booking per rider per trip
 );
 
-create index if not exists bookings_rider_id_idx on public.bookings(rider_id);
-create index if not exists bookings_trip_id_idx  on public.bookings(trip_id);
-
--- Auto-populate driver_id on booking insert
-create or replace function public.set_booking_driver()
-returns trigger language plpgsql as $$
-begin
-  select driver_id into new.driver_id from public.trips where id = new.trip_id;
-  return new;
-end;
-$$;
-
-drop trigger if exists set_booking_driver_trigger on public.bookings;
-create trigger set_booking_driver_trigger
-  before insert on public.bookings
-  for each row execute procedure public.set_booking_driver();
+create index if not exists bookings_rider_id_idx  on public.bookings(rider_id);
+create index if not exists bookings_trip_id_idx   on public.bookings(trip_id);
+create index if not exists bookings_driver_id_idx on public.bookings(driver_id);
 
 -- ─── WALLET ─────────────────────────────────────────────────
 create table if not exists public.wallet (
@@ -131,49 +94,306 @@ create table if not exists public.notifications (
   created_at timestamptz default now()
 );
 
--- ─── ROW LEVEL SECURITY ─────────────────────────────────────
-alter table public.profiles       enable row level security;
+create index if not exists notifications_user_id_idx on public.notifications(user_id, read);
+
+-- ============================================================
+-- SIGNUP PIPELINE
+-- ============================================================
+-- The client never writes profiles / driver_profiles / wallet rows
+-- directly: with email confirmation enabled, signUp() returns a user
+-- but no session, so auth.uid() is null and every such insert would be
+-- rejected by RLS. These triggers run as the definer instead, so a
+-- signup is complete before the user ever confirms their address.
+
+-- Hash the UFID before it is ever persisted. Runs BEFORE insert so the
+-- raw value is stripped from user metadata and never lands in auth.users.
+create or replace function public.hash_signup_ufid()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare
+  v_ufid text := new.raw_user_meta_data->>'ufid';
+  v_salt text := coalesce(current_setting('app.ufid_salt', true), 'drivah-default-salt');
+begin
+  if v_ufid is not null then
+    new.raw_user_meta_data =
+      (new.raw_user_meta_data - 'ufid') ||
+      jsonb_build_object('ufid_hash', encode(digest(v_ufid || v_salt, 'sha256'), 'hex'));
+  end if;
+  return new;
+end $$;
+
+drop trigger if exists on_auth_user_hash_ufid on auth.users;
+create trigger on_auth_user_hash_ufid
+  before insert on auth.users
+  for each row execute procedure public.hash_signup_ufid();
+
+-- Create the profile, the wallet, and (for drivers) the vehicle record.
+create or replace function public.handle_new_user()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare
+  v_meta jsonb := coalesce(new.raw_user_meta_data, '{}'::jsonb);
+  v_role text  := coalesce(v_meta->>'role', 'rider');
+begin
+  insert into public.profiles (id, full_name, email, role, ufid_hash, phone)
+  values (new.id,
+          coalesce(v_meta->>'full_name', 'User'),
+          new.email,
+          v_role,
+          v_meta->>'ufid_hash',
+          v_meta->>'phone')
+  on conflict (id) do nothing;
+
+  insert into public.wallet (user_id) values (new.id)
+  on conflict (user_id) do nothing;
+
+  if v_role = 'driver' then
+    insert into public.driver_profiles (id, car_make, car_model, car_year, plate_number)
+    values (new.id,
+            v_meta->>'car_make',
+            v_meta->>'car_model',
+            nullif(v_meta->>'car_year', '')::integer,
+            v_meta->>'plate_number')
+    on conflict (id) do nothing;
+  end if;
+
+  return new;
+end $$;
+
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute procedure public.handle_new_user();
+
+-- ============================================================
+-- BOOKING FLOW
+-- ============================================================
+-- Riders cannot update public.trips (trips_update_own is driver-only),
+-- so seat counts are maintained here instead. The row lock also closes
+-- the read-then-write race between two riders joining the last seat.
+
+create or replace function public.join_trip(p_trip_id uuid)
+returns public.bookings
+language plpgsql security definer set search_path = public as $$
+declare
+  v_trip    public.trips;
+  v_booking public.bookings;
+  v_name    text;
+begin
+  if auth.uid() is null then
+    raise exception 'You must be signed in to join a trip';
+  end if;
+
+  select * into v_trip from public.trips where id = p_trip_id for update;
+  if not found                          then raise exception 'Trip not found'; end if;
+  if v_trip.status = 'cancelled'        then raise exception 'This trip was cancelled'; end if;
+  if v_trip.depart_at < now()           then raise exception 'This trip has already departed'; end if;
+  if v_trip.driver_id = auth.uid()      then raise exception 'You cannot join your own trip'; end if;
+  if v_trip.seats_taken >= v_trip.seats_total then raise exception 'No seats left on this trip'; end if;
+
+  insert into public.bookings (trip_id, rider_id, driver_id, amount_paid, status)
+  values (p_trip_id, auth.uid(), v_trip.driver_id, v_trip.cost_per_seat, 'confirmed')
+  returning * into v_booking;
+
+  update public.trips
+     set seats_taken = seats_taken + 1,
+         status = case when seats_taken + 1 >= seats_total then 'full' else status end
+   where id = p_trip_id;
+
+  select full_name into v_name from public.profiles where id = auth.uid();
+
+  insert into public.notifications (user_id, type, title, body)
+  values (v_trip.driver_id, 'booking_created', 'New rider joined 🎉',
+          coalesce(v_name, 'A rider') || ' joined your trip to ' || v_trip.destination);
+
+  return v_booking;
+end $$;
+
+create or replace function public.leave_trip(p_trip_id uuid)
+returns void
+language plpgsql security definer set search_path = public as $$
+declare
+  v_trip    public.trips;
+  v_removed integer;
+  v_name    text;
+begin
+  if auth.uid() is null then
+    raise exception 'You must be signed in';
+  end if;
+
+  select * into v_trip from public.trips where id = p_trip_id for update;
+  if not found then raise exception 'Trip not found'; end if;
+
+  -- Deleted rather than marked cancelled so unique(trip_id, rider_id)
+  -- does not permanently block the rider from rejoining.
+  delete from public.bookings where trip_id = p_trip_id and rider_id = auth.uid();
+  get diagnostics v_removed = row_count;
+  if v_removed = 0 then raise exception 'You are not on this trip'; end if;
+
+  update public.trips
+     set seats_taken = greatest(seats_taken - v_removed, 0),
+         status = case when status = 'full' then 'active' else status end
+   where id = p_trip_id;
+
+  select full_name into v_name from public.profiles where id = auth.uid();
+
+  insert into public.notifications (user_id, type, title, body)
+  values (v_trip.driver_id, 'booking_cancelled', 'A rider left your trip',
+          coalesce(v_name, 'A rider') || ' left your trip to ' || v_trip.destination);
+end $$;
+
+-- Cancelling a trip notifies everyone already booked on it.
+create or replace function public.notify_trip_cancelled()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if new.status = 'cancelled' and old.status is distinct from 'cancelled' then
+    insert into public.notifications (user_id, type, title, body)
+    select b.rider_id, 'trip_cancelled', 'Trip cancelled ❌',
+           'Your ride from ' || new.origin || ' to ' || new.destination ||
+           ' on ' || to_char(new.depart_at, 'Mon DD') || ' was cancelled by the driver.'
+      from public.bookings b
+     where b.trip_id = new.id and b.status = 'confirmed';
+
+    update public.bookings set status = 'cancelled'
+     where trip_id = new.id and status = 'confirmed';
+  end if;
+  return new;
+end $$;
+
+drop trigger if exists on_trip_cancelled on public.trips;
+create trigger on_trip_cancelled
+  after update of status on public.trips
+  for each row execute procedure public.notify_trip_cancelled();
+
+-- ============================================================
+-- RECURRING TRIPS
+-- ============================================================
+-- Rolls each past weekly trip forward to its next future slot. Safe to
+-- call repeatedly: the source instance is retired as it is cloned, so a
+-- trip is never duplicated. Call it from a pg_cron job if available,
+-- otherwise the app invokes it when a trip list loads.
+
+create or replace function public.roll_recurring_trips()
+returns integer
+language plpgsql security definer set search_path = public as $$
+declare
+  v_count integer := 0;
+  r       public.trips;
+begin
+  for r in
+    select * from public.trips
+     where is_recurring
+       and status in ('active', 'full')
+       and depart_at < now()
+     for update skip locked
+  loop
+    insert into public.trips
+      (driver_id, driver_name, driver_rating, driver_rides, origin, destination,
+       depart_at, seats_total, seats_taken, distance_miles, cost_per_seat,
+       is_recurring, detour_ok, note, status)
+    values
+      (r.driver_id, r.driver_name, r.driver_rating, r.driver_rides, r.origin, r.destination,
+       r.depart_at + (ceil(extract(epoch from (now() - r.depart_at)) / 604800)::integer * interval '7 days'),
+       r.seats_total, 0, r.distance_miles, r.cost_per_seat,
+       true, r.detour_ok, r.note, 'active');
+
+    update public.trips
+       set is_recurring = false,
+           status = case when status = 'full' then 'completed' else status end
+     where id = r.id;
+
+    v_count := v_count + 1;
+  end loop;
+  return v_count;
+end $$;
+
+-- ============================================================
+-- ROW LEVEL SECURITY
+-- ============================================================
+alter table public.profiles        enable row level security;
 alter table public.driver_profiles enable row level security;
-alter table public.trips          enable row level security;
-alter table public.bookings       enable row level security;
-alter table public.wallet         enable row level security;
-alter table public.notifications  enable row level security;
+alter table public.trips           enable row level security;
+alter table public.bookings        enable row level security;
+alter table public.wallet          enable row level security;
+alter table public.notifications   enable row level security;
+
+-- Definer-side admin check, so admin policies do not recurse through RLS.
+create or replace function public.is_admin()
+returns boolean
+language sql security definer stable set search_path = public as $$
+  select exists (
+    select 1 from public.profiles
+     where id = auth.uid() and role = 'admin'
+  );
+$$;
 
 -- Profiles: users see all profiles (for driver info on trip cards), edit only own
+drop policy if exists "profiles_select_all" on public.profiles;
+drop policy if exists "profiles_update_own" on public.profiles;
 create policy "profiles_select_all" on public.profiles for select using (true);
 create policy "profiles_update_own" on public.profiles for update using (auth.uid() = id);
 
 -- Driver profiles: visible to all, editable by owner
+drop policy if exists "driver_profiles_select_all"  on public.driver_profiles;
+drop policy if exists "driver_profiles_insert_own"  on public.driver_profiles;
+drop policy if exists "driver_profiles_update_own"  on public.driver_profiles;
 create policy "driver_profiles_select_all" on public.driver_profiles for select using (true);
 create policy "driver_profiles_insert_own" on public.driver_profiles for insert with check (auth.uid() = id);
 create policy "driver_profiles_update_own" on public.driver_profiles for update using (auth.uid() = id);
 
--- Trips: visible to all authenticated users, writable by driver
-create policy "trips_select_all"   on public.trips for select using (auth.role() = 'authenticated');
-create policy "trips_insert_own"   on public.trips for insert with check (auth.uid() = driver_id);
-create policy "trips_update_own"   on public.trips for update using (auth.uid() = driver_id);
+-- Trips: visible to all authenticated users, writable by the driver
+drop policy if exists "trips_select_all" on public.trips;
+drop policy if exists "trips_insert_own" on public.trips;
+drop policy if exists "trips_update_own" on public.trips;
+create policy "trips_select_all" on public.trips for select using (auth.role() = 'authenticated');
+create policy "trips_insert_own" on public.trips for insert with check (auth.uid() = driver_id);
+create policy "trips_update_own" on public.trips for update using (auth.uid() = driver_id);
 
--- Bookings: riders see own, drivers see their trip bookings
-create policy "bookings_select_rider"  on public.bookings for select using (auth.uid() = rider_id or auth.uid() = driver_id);
-create policy "bookings_insert_rider"  on public.bookings for insert with check (auth.uid() = rider_id);
-create policy "bookings_update_rider"  on public.bookings for update using (auth.uid() = rider_id);
+-- Bookings: riders see their own, drivers see bookings on their trips,
+-- admins see everything (the platform dashboard counts them).
+drop policy if exists "bookings_select_rider" on public.bookings;
+drop policy if exists "bookings_insert_rider" on public.bookings;
+drop policy if exists "bookings_update_rider" on public.bookings;
+drop policy if exists "bookings_select_admin" on public.bookings;
+create policy "bookings_select_rider" on public.bookings for select
+  using (auth.uid() = rider_id or auth.uid() = driver_id);
+create policy "bookings_select_admin" on public.bookings for select using (public.is_admin());
+create policy "bookings_insert_rider" on public.bookings for insert with check (auth.uid() = rider_id);
+create policy "bookings_update_rider" on public.bookings for update using (auth.uid() = rider_id);
 
--- Wallet: own only
-create policy "wallet_own" on public.wallet for all using (auth.uid() = user_id);
+-- Wallet + notifications: own rows only
+drop policy if exists "wallet_own"        on public.wallet;
+drop policy if exists "notifications_own" on public.notifications;
+create policy "wallet_own"        on public.wallet        for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "notifications_own" on public.notifications for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
--- Notifications: own only
-create policy "notifications_own" on public.notifications for all using (auth.uid() = user_id);
+-- Only these entry points may be called from the browser.
+revoke all on function public.join_trip(uuid)        from public;
+revoke all on function public.leave_trip(uuid)       from public;
+revoke all on function public.roll_recurring_trips() from public;
+grant execute on function public.join_trip(uuid)        to authenticated;
+grant execute on function public.leave_trip(uuid)       to authenticated;
+grant execute on function public.roll_recurring_trips() to authenticated;
 
 -- ─── REALTIME ───────────────────────────────────────────────
--- Enable realtime for live trip updates and notifications
 alter publication supabase_realtime add table public.trips;
 alter publication supabase_realtime add table public.notifications;
 alter publication supabase_realtime add table public.bookings;
 
--- ─── SEED: Admin user ───────────────────────────────────────
--- After running this schema, manually create an admin user in
--- Supabase Auth dashboard, then run:
+-- ============================================================
+-- POST-INSTALL
+-- ============================================================
+-- 1. Set the server-side UFID salt (never exposed to the browser):
 --
--- update public.profiles set role = 'admin' where email = 'your@email.com';
+--    alter database postgres set app.ufid_salt = 'some-long-random-string';
 --
+--    Then restart the project's database from Settings → General so the
+--    new setting is picked up. Without it a default salt is used.
+--
+-- 2. Create an admin: add the user in Authentication → Users, then run
+--
+--    update public.profiles set role = 'admin' where email = 'your@email.com';
+--
+-- 3. Optional — roll recurring trips on a schedule instead of on page load:
+--
+--    select cron.schedule('roll-recurring', '0 * * * *',
+--                         $$select public.roll_recurring_trips()$$);
 -- ============================================================

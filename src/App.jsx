@@ -1,20 +1,33 @@
 import { useState, useEffect } from 'react'
 import { supabase, isDemo } from './supabase.js'
 import { setDemoRole } from './demoClient.js'
-import { C, CSS } from './theme.js'
+import { C } from './theme.js'
 import { Logo, DemoBanner } from './components/UI.jsx'
-import { RoleSelector, LoginScreen, ForgotScreen, AdminPinGate } from './screens/Auth.jsx'
+import { RoleSelector, LoginScreen, ForgotScreen, AdminPinGate, ResetPasswordScreen } from './screens/Auth.jsx'
 import { RiderSignup, DriverSignup } from './screens/Signup.jsx'
 import { RiderApp, DriverApp, AdminPlatform } from './screens/Apps.jsx'
+
+/* Supabase puts the recovery token in the URL fragment and emits
+   PASSWORD_RECOVERY once it has parsed it. Check the fragment directly too,
+   so a slow parse cannot drop the user on the role selector instead. */
+const hasRecoveryToken = () =>
+  typeof window !== 'undefined' && /type=recovery/.test(window.location.hash)
 
 export default function App() {
   const [stage,   setStage]   = useState('loading')
   const [role,    setRole]    = useState(null)
   const [profile, setProfile] = useState(null)
 
+  const stageFor = (prof) =>
+    prof.role === 'admin'  ? 'adminPin'   // never skip the PIN, even on session restore
+  : prof.role === 'driver' ? 'driverApp'
+  :                          'riderApp'
+
   // Check for existing session on mount
   useEffect(() => {
     const checkSession = async () => {
+      if (hasRecoveryToken()) { setStage('resetPassword'); return }
+
       const { data: { session } } = await supabase.auth.getSession()
       if (session?.user) {
         const { data: prof } = await supabase
@@ -24,7 +37,7 @@ export default function App() {
           .single()
         if (prof) {
           setProfile(prof)
-          setStage(prof.role === 'admin' ? 'adminApp' : prof.role === 'driver' ? 'driverApp' : 'riderApp')
+          setStage(stageFor(prof))
           return
         }
       }
@@ -32,8 +45,9 @@ export default function App() {
     }
     checkSession()
 
-    // Listen for auth state changes (logout, token refresh, etc.)
+    // Listen for auth state changes (logout, recovery, token refresh, etc.)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === 'PASSWORD_RECOVERY') { setStage('resetPassword'); return }
       if (!session) { setProfile(null); setStage('role') }
     })
     return () => subscription.unsubscribe()
@@ -48,13 +62,12 @@ export default function App() {
 
   const handleLoginSuccess = (prof) => {
     setProfile(prof)
-    setStage(prof.role === 'admin' ? 'adminApp' : prof.role === 'driver' ? 'driverApp' : 'riderApp')
+    setStage(stageFor(prof))
   }
 
   // Loading splash
   if (stage === 'loading') return (
     <div style={{ height: '100vh', background: C.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 20 }}>
-      <style>{CSS}</style>
       <Logo size="lg" />
       <div className="spin" style={{ fontSize: 24, color: C.blue }}>⟳</div>
     </div>
@@ -82,9 +95,12 @@ export default function App() {
       {stage === 'signup' && role === 'rider'  && <RiderSignup  onBack={() => setStage('login')} />}
       {stage === 'signup' && role === 'driver' && <DriverSignup onBack={() => setStage('login')} />}
 
-      {/* Forgot password */}
+      {/* Password reset */}
       {stage === 'forgot' && (
         <ForgotScreen role={role} onBack={() => setStage('login')} />
+      )}
+      {stage === 'resetPassword' && (
+        <ResetPasswordScreen onDone={() => { setProfile(null); setStage('role') }} />
       )}
 
       {/* Admin login → PIN gate */}
@@ -92,13 +108,13 @@ export default function App() {
         <LoginScreen
           role="admin"
           onBack={() => setStage('role')}
-          onSuccess={() => setStage('adminPin')}
+          onSuccess={handleLoginSuccess}
           onSignup={null}
           onForgot={() => setStage('forgot')}
         />
       )}
       {stage === 'adminPin' && (
-        <AdminPinGate onBack={() => setStage('role')} onVerified={() => setStage('adminApp')} />
+        <AdminPinGate onBack={handleLogout} onVerified={() => setStage('adminApp')} />
       )}
 
       {/* Apps */}

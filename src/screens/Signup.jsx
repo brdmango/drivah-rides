@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { supabase } from '../supabase.js'
-import { C, CSS } from '../theme.js'
-import { isUFEmail, isValidUID, hashUFID } from '../utils.js'
+import { C } from '../theme.js'
+import { isUFEmail, isValidUID, digitsOnly } from '../utils.js'
 import { Logo, Input, Btn, Toast } from '../components/UI.jsx'
 
 /* ─── Rider Signup ─── */
@@ -34,13 +34,15 @@ export function RiderSignup({ onBack }) {
     setErrors(e); if (Object.keys(e).length) return
     setLoading(true)
     try {
-      const ufidHash = await hashUFID(ufid)
-      const { data, error } = await supabase.auth.signUp({
+      // The UFID is hashed server-side by the hash_signup_ufid trigger, and
+      // the profile + wallet rows are created by handle_new_user. Inserting
+      // them from here would fail whenever email confirmation is enabled,
+      // because signUp() returns no session and RLS sees auth.uid() as null.
+      const { error } = await supabase.auth.signUp({
         email: email.toLowerCase(), password: pass,
-        options: { data: { full_name: name, role: 'rider', ufid_hash: ufidHash } },
+        options: { data: { full_name: name, role: 'rider', ufid } },
       })
       if (error) throw error
-      if (data.user) await supabase.from('wallet').insert({ user_id: data.user.id })
       setDone(true)
     } catch (err) { notify(err.message || 'Signup failed') }
     setLoading(false)
@@ -48,7 +50,6 @@ export function RiderSignup({ onBack }) {
 
   if (done) return (
     <div style={{ height: '100vh', background: C.bg, fontFamily: "'DM Sans', sans-serif", display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
-      <style>{CSS}</style>
       <div className="up" style={{ width: '100%', maxWidth: 400, textAlign: 'center' }}>
         <div style={{ fontSize: 60, marginBottom: 16 }}>🐊</div>
         <div style={{ fontFamily: "'Syne', sans-serif", fontWeight: 800, fontSize: 28, color: C.green, marginBottom: 10 }}>You're in!</div>
@@ -62,7 +63,6 @@ export function RiderSignup({ onBack }) {
 
   return (
     <div style={{ height: '100vh', background: C.bg, fontFamily: "'DM Sans', sans-serif", display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      <style>{CSS}</style>
       {toast && <Toast msg={toast.msg} color={toast.c} />}
       <div style={{ height: 3, background: `linear-gradient(90deg, ${C.uf}, ${C.blue})`, flexShrink: 0 }} />
       <div style={{ flex: 1, overflowY: 'auto', padding: '24px 20px 40px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
@@ -82,7 +82,7 @@ export function RiderSignup({ onBack }) {
             <div className="in">
               <Input label="FULL NAME"    value={name}  onChange={setName}  placeholder="Your full name"      error={errors.name}  icon="👤" />
               <Input label="UFL EMAIL"    type="email" value={email} onChange={setEmail} placeholder="yourname@ufl.edu" error={errors.email} hint="@ufl.edu only" icon="✉" />
-              <Input label="UFID NUMBER"  type="tel"   value={ufid}  onChange={v => setUfid(v.replace(/\D/, '').slice(0, 8))} placeholder="8-digit UFID" error={errors.ufid} hint="8 digits" icon="#" />
+              <Input label="UFID NUMBER"  type="tel"   value={ufid}  onChange={v => setUfid(digitsOnly(v, 8))} placeholder="8-digit UFID" error={errors.ufid} hint="8 digits" icon="#" />
               <Btn onClick={() => { if (v1()) { setErrors({}); setStep(2) } }}>Continue →</Btn>
             </div>
           )}
@@ -145,21 +145,22 @@ export function DriverSignup({ onBack }) {
     if (!agreed) { notify('Please agree to the terms'); return }
     setLoading(true)
     try {
-      const ufidHash = await hashUFID(ufid)
-      const { data, error } = await supabase.auth.signUp({
+      // Vehicle details ride along as signup metadata so handle_new_user can
+      // create driver_profiles + wallet as the definer. Writing them from the
+      // client failed under RLS whenever email confirmation was enabled.
+      const { error } = await supabase.auth.signUp({
         email: email.toLowerCase(), password: pass,
-        options: { data: { full_name: name, role: 'driver', ufid_hash: ufidHash } },
+        options: {
+          data: {
+            full_name: name, role: 'driver', ufid,
+            car_make:  car.trim().split(' ')[0],
+            car_model: car.trim().split(' ').slice(1).join(' ') || car.trim(),
+            car_year:  year,
+            plate_number: plate.trim(),
+          },
+        },
       })
       if (error) throw error
-      if (data.user) {
-        await supabase.from('driver_profiles').insert({
-          id: data.user.id,
-          car_make: car.split(' ')[0], car_model: car.split(' ').slice(1).join(' ') || car,
-          car_year: parseInt(year), plate_number: plate,
-          status: 'approved', rating: 5.0, total_rides: 0,
-        })
-        await supabase.from('wallet').insert({ user_id: data.user.id })
-      }
       setDone(true)
     } catch (err) { notify(err.message || 'Registration failed') }
     setLoading(false)
@@ -167,7 +168,6 @@ export function DriverSignup({ onBack }) {
 
   if (done) return (
     <div style={{ height: '100vh', background: C.bg, fontFamily: "'DM Sans', sans-serif", display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
-      <style>{CSS}</style>
       <div className="up" style={{ width: '100%', maxWidth: 400, textAlign: 'center' }}>
         <div style={{ fontSize: 60, marginBottom: 14 }}>🚗</div>
         <div style={{ fontFamily: "'Syne', sans-serif", fontWeight: 800, fontSize: 28, color: C.amber, marginBottom: 10 }}>Ready to Roll!</div>
@@ -179,7 +179,6 @@ export function DriverSignup({ onBack }) {
 
   return (
     <div style={{ height: '100vh', background: C.bg, fontFamily: "'DM Sans', sans-serif", display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      <style>{CSS}</style>
       {toast && <Toast msg={toast.msg} color={toast.c} />}
       <div style={{ height: 3, background: `linear-gradient(90deg, ${C.uf}, ${C.amber})`, flexShrink: 0 }} />
       <div style={{ flex: 1, overflowY: 'auto', padding: '24px 20px 40px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
@@ -202,7 +201,7 @@ export function DriverSignup({ onBack }) {
             <div className="in">
               <Input label="FULL NAME"        value={name}    onChange={setName}    placeholder="Your full name"      error={errors.name}    icon="👤" />
               <Input label="UFL EMAIL"        type="email"   value={email}   onChange={setEmail}   placeholder="yourname@ufl.edu"   error={errors.email}   hint="@ufl.edu" icon="✉" />
-              <Input label="UFID NUMBER"      type="tel"     value={ufid}    onChange={v => setUfid(v.replace(/\D/, '').slice(0, 8))} placeholder="8-digit UFID" error={errors.ufid} hint="8 digits" icon="#" />
+              <Input label="UFID NUMBER"      type="tel"     value={ufid}    onChange={v => setUfid(digitsOnly(v, 8))} placeholder="8-digit UFID" error={errors.ufid} hint="8 digits" icon="#" />
               <Input label="PASSWORD"         type="password" value={pass}   onChange={setPass}    placeholder="Min 6 characters"   error={errors.pass}    icon="🔒" />
               <Input label="CONFIRM PASSWORD" type="password" value={confirm} onChange={setConfirm} placeholder="Repeat password"   error={errors.confirm} icon="🔒" />
               <Btn onClick={() => { if (v1()) { setErrors({}); setStep(2) } }} variant="amber">Continue →</Btn>
@@ -215,7 +214,7 @@ export function DriverSignup({ onBack }) {
                 🚗 Vehicle must be <strong>2010 or newer</strong>. Shown to riders when they join your trips.
               </div>
               <Input label="MAKE & MODEL"   value={car}   onChange={setCar}   placeholder="e.g. Toyota Camry" error={errors.car}   icon="🚗" />
-              <Input label="YEAR"           type="tel"   value={year}  onChange={v => setYear(v.replace(/\D/, '').slice(0, 4))} placeholder="e.g. 2021" error={errors.year} hint="2010+" icon="📅" />
+              <Input label="YEAR"           type="tel"   value={year}  onChange={v => setYear(digitsOnly(v, 4))} placeholder="e.g. 2021" error={errors.year} hint="2010+" icon="📅" />
               <Input label="LICENSE PLATE"  value={plate} onChange={setPlate} placeholder="e.g. ABC-1234"     error={errors.plate} icon="🪪" />
               <Btn onClick={() => { if (v2()) { setErrors({}); setStep(3) } }} variant="amber">Continue →</Btn>
             </div>

@@ -1,14 +1,13 @@
 import { useState } from 'react'
 import { supabase } from '../supabase.js'
-import { C, CSS } from '../theme.js'
-import { isUFEmail, isValidUID, hashUFID } from '../utils.js'
+import { C } from '../theme.js'
+import { isUFEmail } from '../utils.js'
 import { Logo, UFBadge, Tag, Input, Btn, Toast, Divider } from '../components/UI.jsx'
 
 /* ─── Role Selector ─── */
 export function RoleSelector({ onSelect }) {
   return (
     <div style={{ height: '100vh', background: C.bg, fontFamily: "'DM Sans', sans-serif", display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24, position: 'relative', overflow: 'hidden' }}>
-      <style>{CSS}</style>
       <div style={{ position: 'absolute', top: -100, right: -100, width: 400, height: 400, borderRadius: '50%', background: `radial-gradient(circle, ${C.blue}08, transparent 70%)`, pointerEvents: 'none' }} />
       <div style={{ position: 'absolute', bottom: -80, left: -80, width: 300, height: 300, borderRadius: '50%', background: `radial-gradient(circle, ${C.amber}06, transparent 70%)`, pointerEvents: 'none' }} />
 
@@ -77,7 +76,10 @@ export function LoginScreen({ role, onBack, onSuccess, onSignup, onForgot }) {
     try {
       const { data, error } = await supabase.auth.signInWithPassword({ email: email.toLowerCase(), password: pass })
       if (error) throw error
-      const { data: profile, error: pErr } = await supabase.from('profiles').select('*').eq('id', data.user.id).single()
+      // Vehicle details live on driver_profiles, so embed them here — the
+      // driver profile tab reads them straight off this object.
+      const { data: profile, error: pErr } = await supabase
+        .from('profiles').select('*, driver_profiles(*)').eq('id', data.user.id).single()
       if (pErr) throw pErr
       if (role !== 'admin' && profile.role !== role) throw new Error(`Account registered as ${profile.role}`)
       if (role === 'admin' && profile.role !== 'admin') throw new Error('Admin access required')
@@ -92,7 +94,6 @@ export function LoginScreen({ role, onBack, onSuccess, onSignup, onForgot }) {
 
   return (
     <div style={{ height: '100vh', background: C.bg, fontFamily: "'DM Sans', sans-serif", display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      <style>{CSS}</style>
       {toast && <Toast msg={toast.msg} color={toast.c} />}
       <div style={{ height: 3, background: `linear-gradient(90deg, ${C.uf}, ${accent})`, flexShrink: 0 }} />
       <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '28px 24px' }}>
@@ -149,7 +150,6 @@ export function ForgotScreen({ role, onBack }) {
 
   return (
     <div style={{ height: '100vh', background: C.bg, fontFamily: "'DM Sans', sans-serif", display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
-      <style>{CSS}</style>
       {toast && <Toast msg={toast.msg} color={toast.c} />}
       <div className="up" style={{ width: '100%', maxWidth: 400 }}>
         <div style={{ display: 'flex', alignItems: 'center', marginBottom: 28 }}>
@@ -169,6 +169,62 @@ export function ForgotScreen({ role, onBack }) {
             <div style={{ fontFamily: "'Syne', sans-serif", fontWeight: 800, fontSize: 24, color: C.green, marginBottom: 10 }}>Check Your Email</div>
             <div style={{ fontSize: 14, color: C.sub, lineHeight: 1.7, marginBottom: 24 }}>Reset link sent to <strong style={{ color: C.white }}>{email}</strong></div>
             <Btn onClick={onBack}>Back to Sign In →</Btn>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/* ─── Set New Password (recovery link landing) ─── */
+export function ResetPasswordScreen({ onDone }) {
+  const [pass,    setPass]    = useState('')
+  const [confirm, setConfirm] = useState('')
+  const [errors,  setErrors]  = useState({})
+  const [loading, setLoading] = useState(false)
+  const [done,    setDone]    = useState(false)
+  const [toast,   setToast]   = useState(null)
+  const notify = (msg, c = C.red) => { setToast({ msg, c }); setTimeout(() => setToast(null), 3000) }
+
+  const submit = async () => {
+    const e = {}
+    if (!pass || pass.length < 6) e.pass    = 'Min 6 characters'
+    if (pass !== confirm)         e.confirm = "Passwords don't match"
+    setErrors(e); if (Object.keys(e).length) return
+
+    setLoading(true)
+    try {
+      const { error } = await supabase.auth.updateUser({ password: pass })
+      if (error) throw error
+      // Drop the recovery token so a refresh does not reopen this screen.
+      window.history.replaceState({}, '', window.location.pathname)
+      await supabase.auth.signOut()
+      setDone(true)
+    } catch (err) {
+      notify(err.message || 'Could not update password')
+    }
+    setLoading(false)
+  }
+
+  return (
+    <div style={{ height: '100vh', background: C.bg, fontFamily: "'DM Sans', sans-serif", display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+      {toast && <Toast msg={toast.msg} color={toast.c} />}
+      <div className="up" style={{ width: '100%', maxWidth: 400 }}>
+        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 28 }}><Logo size="lg" /></div>
+        {!done ? (
+          <>
+            <div style={{ fontFamily: "'Syne', sans-serif", fontWeight: 800, fontSize: 26, color: C.white, marginBottom: 6 }}>Set a New Password</div>
+            <div style={{ fontSize: 13, color: C.sub, marginBottom: 24 }}>Choose a new password for your DRIVAH account.</div>
+            <Input label="NEW PASSWORD"     type="password" value={pass}    onChange={setPass}    placeholder="Min 6 characters" error={errors.pass}    icon="🔒" />
+            <Input label="CONFIRM PASSWORD" type="password" value={confirm} onChange={setConfirm} placeholder="Repeat password"  error={errors.confirm} icon="🔒" />
+            <Btn onClick={submit} loading={loading}>Update Password</Btn>
+          </>
+        ) : (
+          <div className="in" style={{ textAlign: 'center' }}>
+            <div style={{ fontSize: 56, marginBottom: 16 }}>🔐</div>
+            <div style={{ fontFamily: "'Syne', sans-serif", fontWeight: 800, fontSize: 24, color: C.green, marginBottom: 10 }}>Password Updated</div>
+            <div style={{ fontSize: 14, color: C.sub, lineHeight: 1.7, marginBottom: 24 }}>Sign in with your new password to continue.</div>
+            <Btn onClick={onDone}>Go to Sign In →</Btn>
           </div>
         )}
       </div>
@@ -207,7 +263,6 @@ export function AdminPinGate({ onBack, onVerified }) {
 
   return (
     <div style={{ height: '100vh', background: C.bg, fontFamily: "'DM Sans', sans-serif", display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
-      <style>{CSS}</style>
       {toast && <Toast msg={toast.msg} color={toast.c} />}
       <div className="up" style={{ width: '100%', maxWidth: 380 }}>
         <div style={{ display: 'flex', alignItems: 'center', marginBottom: 32 }}>

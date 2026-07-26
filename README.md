@@ -39,7 +39,14 @@ Fill in your `.env`:
 ```
 VITE_SUPABASE_URL=https://yourproject.supabase.co
 VITE_SUPABASE_ANON_KEY=your-anon-key
-VITE_UFID_SALT=any-random-secret-string
+```
+
+Then set the UFID salt on the database — it is deliberately *not* a `VITE_`
+variable, because anything prefixed that way is compiled into the JavaScript
+bundle and readable by anyone:
+
+```sql
+alter database postgres set app.ufid_salt = 'some-long-random-string';
 ```
 
 Restart the dev server and the app switches from demo mode to your live project.
@@ -105,12 +112,16 @@ drivah/
 ## Key Features
 
 - **@ufl.edu verification** — only real UF students
-- **UFID hashing** — secure, never stored in plaintext
+- **UFID hashing** — hashed in Postgres with a server-side salt, and the raw
+  value is stripped from user metadata before it is ever stored
 - **IRS mileage rate calculator** — auto-calculates fair gas splits
-- **Recurring trips** — post once, riders join every week
-- **Realtime notifications** — via Supabase realtime subscriptions
+- **Atomic seat booking** — `join_trip` / `leave_trip` lock the trip row, so two
+  riders cannot take the same last seat
+- **Recurring trips** — post once, and each week's instance is rolled forward
+- **Realtime notifications** — drivers are told when riders join or leave;
+  riders are told when a trip is cancelled
 - **Detour toggle** — drivers can signal flexibility
-- **Admin PIN gate** — two-factor admin security
+- **Admin PIN gate** — a second step in front of the admin dashboard
 
 ---
 
@@ -134,6 +145,11 @@ After running the schema, create an admin user:
 update public.profiles set role = 'admin' where email = 'your@email.com';
 ```
 4. Default admin PIN is `2580` — change it in `src/screens/Auth.jsx`
+
+> **On the admin PIN:** it is checked in the browser, so treat it as a
+> speed bump against a shoulder-surfer, not as access control. What actually
+> protects admin data is the `is_admin()` RLS policy in the schema, which is
+> enforced by Postgres regardless of what the client does.
 
 ---
 
