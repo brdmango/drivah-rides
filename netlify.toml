@@ -1,0 +1,73 @@
+# Netlify configuration for DRIVAH
+#
+# Unlike impressivebite, this repo is a Vite app rather than a static site, so
+# Netlify runs the build and publishes the output directory.
+#
+# Environment variables decide what gets deployed. With none set, the build
+# ships demo mode — a self-contained in-memory backend, which is what you want
+# for a link you hand to people. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY
+# under Site configuration → Environment variables to deploy against real data.
+# Vite inlines them at build time, so changing them needs a redeploy, not just a
+# restart.
+
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+# --- SPA routing ------------------------------------------------------------
+# The password-reset email links to /reset-password. There is no router and no
+# such file on disk, so without this rewrite that link would 404 before the app
+# ever booted and could read the recovery token out of the URL fragment.
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# --- Security headers -------------------------------------------------------
+# The CSP is tighter than it looks:
+#
+#   script-src  'self' only. Vite emits the bundle as an external hashed file
+#               and no inline <script>, so no hashes or 'unsafe-inline' needed.
+#   style-src   needs 'unsafe-inline': the UI is built almost entirely from
+#               style="" attributes, which cannot be hashed. fonts.googleapis.com
+#               is allowed because theme.js pulls the faces in with an @import.
+#   font-src    fonts.gstatic.com is where those faces actually live.
+#   connect-src Supabase REST/auth over https and realtime over wss. Harmless
+#               when unset — demo mode never opens a connection.
+#   frame-ancestors 'none' so the app cannot be framed and clickjacked around
+#               the admin screens.
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Content-Security-Policy = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://*.supabase.co wss://*.supabase.co; form-action 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'; upgrade-insecure-requests"
+    X-Content-Type-Options = "nosniff"
+    X-Frame-Options = "DENY"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "geolocation=(), microphone=(), camera=(), interest-cohort=()"
+    Strict-Transport-Security = "max-age=31536000; includeSubDomains; preload"
+
+# --- Caching ----------------------------------------------------------------
+# Vite content-hashes asset filenames (index-CRAcEP8g.js), so a changed file is
+# a changed URL and these can be cached immutably — the one-day ceiling that
+# impressivebite needs does not apply here. index.html must always revalidate,
+# since it is what points at the current hashed bundle.
+
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+
+[[headers]]
+  for = "/"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
