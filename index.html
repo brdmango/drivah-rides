@@ -1,15 +1,299 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <meta name="theme-color" content="#0B0C0F" />
-    <meta name="description" content="DRIVAH — The verified campus carpool network for UF students" />
-    <title>DRIVAH · Campus Carpool</title>
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
-  </body>
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="theme-color" content="#0B0C0F" />
+<title>DRIVAH — Split the gas, not the fare. Campus carpool for UF students.</title>
+<meta name="description" content="DRIVAH is the verified carpool network for University of Florida students. Ride with people already making your trip and split the gas at cost. @ufl.edu required." />
+
+<meta property="og:title" content="DRIVAH — Campus carpool for UF students" />
+<meta property="og:description" content="Split the gas, not the fare. Verified @ufl.edu carpools between campus, Butler Plaza, MCO and home." />
+<meta property="og:type" content="website" />
+
+<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@700;800&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/site/site.css" />
+</head>
+<body>
+
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="nav" id="nav">
+  <div class="wrap nav-inner">
+    <a class="brand" href="/" aria-label="DRIVAH home">
+      <span class="brand-mark" aria-hidden="true">🚗</span>
+      <span class="brand-text">
+        <span class="brand-name">DRIVAH</span>
+        <span class="brand-sub">Carpool Network</span>
+      </span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a href="#how">How it works</a>
+      <a href="#cost">The maths</a>
+      <a href="#trust">Safety</a>
+      <a href="#faq">FAQ</a>
+    </nav>
+    <div class="nav-cta">
+      <a class="btn btn-ghost" href="/app/?role=rider">Log in</a>
+      <a class="btn btn-primary" href="/app/?role=rider&amp;signup=1">Create account</a>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+
+  <!-- ── Hero ─────────────────────────────────────────────── -->
+  <section class="hero">
+    <div class="wrap hero-inner">
+      <div class="hero-copy reveal">
+        <p class="eyebrow"><span class="gator" aria-hidden="true">🐊</span> University of Florida · @ufl.edu verified</p>
+        <h1>Split the gas,<br />not the fare.</h1>
+        <p class="lede">
+          Someone in your class is already driving to Orlando on Friday. DRIVAH puts
+          you in that car and splits the fuel at cost — no surge, no driver cut,
+          no stranger from the internet.
+        </p>
+        <div class="hero-actions">
+          <a class="btn btn-primary btn-lg" href="/app/?role=rider&amp;signup=1">I need a ride</a>
+          <a class="btn btn-amber btn-lg" href="/app/?role=driver&amp;signup=1">I'm driving</a>
+        </div>
+        <p class="hero-note">Free to join · Takes about a minute · Your UFID is never stored in the clear</p>
+      </div>
+
+      <!-- The calculator is the product's thesis: the real decision a student
+           makes is a number, so the hero shows the number being made. -->
+      <div class="calc reveal" id="cost">
+        <div class="calc-head">
+          <span class="calc-title">What a seat actually costs</span>
+          <span class="tag tag-mono">IRS rate · $0.21/mi</span>
+        </div>
+
+        <div class="route" aria-hidden="true">
+          <span class="route-dot"></span>
+          <span class="route-line"></span>
+          <span class="route-sq"></span>
+        </div>
+        <div class="route-labels">
+          <span id="calc-origin">Beaty Towers</span>
+          <span id="calc-dest">Orlando (MCO)</span>
+        </div>
+
+        <div class="calc-field">
+          <label for="miles">Distance <output class="mono" id="miles-out">118 mi</output></label>
+          <input type="range" id="miles" min="3" max="200" step="1" value="118" />
+        </div>
+
+        <fieldset class="calc-field">
+          <legend>Riders sharing</legend>
+          <div class="seats" role="radiogroup" aria-label="Riders sharing">
+            <button type="button" class="seat" data-seats="1">1</button>
+            <button type="button" class="seat" data-seats="2">2</button>
+            <button type="button" class="seat is-on" data-seats="3" aria-checked="true">3</button>
+            <button type="button" class="seat" data-seats="4">4</button>
+          </div>
+        </fieldset>
+
+        <div class="calc-result">
+          <div class="calc-figure">
+            <span class="calc-label">Your share</span>
+            <span class="mono calc-big" id="calc-share">$8.26</span>
+          </div>
+          <div class="calc-figure calc-figure--muted">
+            <span class="calc-label">Driving it alone</span>
+            <span class="mono calc-alt" id="calc-solo">$24.78</span>
+          </div>
+        </div>
+        <p class="calc-foot">
+          Cost-sharing only — drivers cover fuel, never turn a profit, and that is
+          what keeps this a carpool rather than a taxi.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── How it works ─────────────────────────────────────── -->
+  <section class="section" id="how">
+    <div class="wrap">
+      <h2 class="reveal">How a trip comes together</h2>
+      <p class="section-lede reveal">
+        Drivers post trips they were taking anyway. Riders claim a seat. Nobody
+        makes a detour they did not agree to.
+      </p>
+
+      <div class="journey">
+        <ol class="steps">
+          <li class="reveal">
+            <h3>A driver posts the trip</h3>
+            <p>Origin, destination, date and distance. DRIVAH works out the per-seat
+               fuel share automatically, so nobody has to haggle over Venmo.</p>
+          </li>
+          <li class="reveal">
+            <h3>Riders claim the empty seats</h3>
+            <p>Search by where you're leaving from or heading to. You see the driver's
+               name, rating, car and how many rides they've done before you commit.</p>
+          </li>
+          <li class="reveal">
+            <h3>The seat is held the moment you tap</h3>
+            <p>Seat counts update instantly and the driver is notified. Two people
+               tapping the last seat at once cannot both get it.</p>
+          </li>
+          <li class="reveal">
+            <h3>You travel, and split the fuel</h3>
+            <p>Meet at the pickup point, split the cost, done. Plans change — you can
+               leave a ride and your seat goes straight back to the pool.</p>
+          </li>
+        </ol>
+      </div>
+
+      <div class="two-up">
+        <article class="panel panel--blue reveal">
+          <span class="panel-kicker">For riders</span>
+          <h3>Cheaper than any other way home</h3>
+          <ul class="ticks">
+            <li>Browse every trip leaving campus this week</li>
+            <li>Pay a share of fuel, not a fare with a margin on top</li>
+            <li>Track what you've saved in your wallet</li>
+            <li>Leave a ride if your plans change</li>
+          </ul>
+          <a class="btn btn-primary" href="/app/?role=rider&amp;signup=1">Create a rider account</a>
+        </article>
+
+        <article class="panel panel--amber reveal">
+          <span class="panel-kicker">For drivers</span>
+          <h3>Your empty seats already cost you money</h3>
+          <ul class="ticks">
+            <li>Post a trip in under a minute</li>
+            <li>Mark it weekly and it reposts itself every week</li>
+            <li>Choose whether you're open to small detours</li>
+            <li>See exactly what riders have contributed</li>
+          </ul>
+          <a class="btn btn-amber" href="/app/?role=driver&amp;signup=1">Register as a driver</a>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Trust ────────────────────────────────────────────── -->
+  <section class="section section--alt" id="trust">
+    <div class="wrap">
+      <h2 class="reveal">Everyone in the car is a Gator</h2>
+      <p class="section-lede reveal">
+        The thing that makes carpooling with strangers bearable is that they are not
+        strangers — they are people who have to show up to the same campus as you on
+        Monday.
+      </p>
+
+      <div class="trust-grid">
+        <article class="trust-card reveal">
+          <span class="uf-badge"><span aria-hidden="true">🐊</span> UF VERIFIED</span>
+          <h3>@ufl.edu or you're not in</h3>
+          <p>Registration requires a working University of Florida address. No public
+             sign-ups, no accounts from outside the university.</p>
+        </article>
+        <article class="trust-card reveal">
+          <h3>Your UFID never sits in a database</h3>
+          <p>It is hashed on our server the moment you register, with a secret that
+             never reaches your browser. The raw number is discarded before storage —
+             we could not tell you your own UFID if you asked.</p>
+        </article>
+        <article class="trust-card reveal">
+          <h3>Drivers register their car</h3>
+          <p>Make, model, year and plate, shown to riders before they claim a seat.
+             Vehicles must be 2010 or newer, and drivers confirm they carry their own
+             insurance.</p>
+        </article>
+        <article class="trust-card reveal">
+          <h3>Cancellations reach people</h3>
+          <p>If a driver calls off a trip, everyone booked on it is told immediately
+             rather than finding out at the kerb.</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── FAQ ──────────────────────────────────────────────── -->
+  <section class="section" id="faq">
+    <div class="wrap wrap--narrow">
+      <h2 class="reveal">Questions worth asking</h2>
+
+      <div class="faq">
+        <details class="reveal">
+          <summary>Is this just Uber with extra steps?</summary>
+          <p>No — the money works differently. A rideshare driver is working, and the
+             fare covers their time plus the platform's cut. A DRIVAH driver is going
+             somewhere anyway, and riders chip in for fuel. The cost is calculated at
+             the IRS mileage rate and split between everyone in the car, so the driver
+             ends up out of pocket less, not in profit.</p>
+        </details>
+        <details class="reveal">
+          <summary>What does a trip actually cost?</summary>
+          <p>Distance × $0.21, divided by the number of riders, with a $1.50 floor so
+             very short hops are still worth posting. Gainesville to Orlando split
+             three ways works out around $8 a seat. The slider at the top of this page
+             runs the same formula the app does.</p>
+        </details>
+        <details class="reveal">
+          <summary>Do I need a car to sign up?</summary>
+          <p>No. Most people join as riders and never post a trip. If you do drive,
+             you can register as a driver and post the trips you were already making.</p>
+        </details>
+        <details class="reveal">
+          <summary>How do I pay?</summary>
+          <p>Directly with your driver, however you two normally settle up. DRIVAH
+             calculates the fair share and tracks what you've spent and saved; it does
+             not sit in the middle of the payment.</p>
+        </details>
+        <details class="reveal">
+          <summary>What if my plans change?</summary>
+          <p>Leave the ride from the app and your seat immediately returns to the pool
+             for someone else. Please do it early rather than at the last minute — the
+             driver is a classmate, not a company.</p>
+        </details>
+        <details class="reveal">
+          <summary>Is it only Gainesville?</summary>
+          <p>For now, yes — DRIVAH is UF students only while we get the basics right.
+             The verification is built to open up to other universities later.</p>
+        </details>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Final CTA ────────────────────────────────────────── -->
+  <section class="cta">
+    <div class="wrap wrap--narrow cta-inner reveal">
+      <h2>There's a car leaving campus this week with your name on an empty seat.</h2>
+      <div class="hero-actions hero-actions--center">
+        <a class="btn btn-primary btn-lg" href="/app/?role=rider&amp;signup=1">Create your account</a>
+        <a class="btn btn-ghost btn-lg" href="/app/?role=rider">I already have one</a>
+      </div>
+      <p class="hero-note">Requires a valid @ufl.edu email address.</p>
+    </div>
+  </section>
+
+</main>
+
+<footer class="foot">
+  <div class="wrap foot-inner">
+    <div>
+      <span class="brand-name foot-name">DRIVAH</span>
+      <p class="foot-note">Campus carpool network · University of Florida</p>
+    </div>
+    <nav class="foot-links" aria-label="Footer">
+      <a href="#how">How it works</a>
+      <a href="#trust">Safety</a>
+      <a href="#faq">FAQ</a>
+      <a href="/app/">Open the app</a>
+    </nav>
+  </div>
+  <div class="wrap foot-fine">
+    <p>DRIVAH facilitates cost-sharing between students. Drivers are not
+       commercial carriers and must hold their own valid insurance.</p>
+  </div>
+</footer>
+
+<script type="module" src="/site/site.js"></script>
+</body>
 </html>

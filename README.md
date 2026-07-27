@@ -12,6 +12,13 @@ Split gas. Build community. Skip Uber.
 npm install
 ```
 
+The site has two halves, built from one Vite project:
+
+| URL | What it is |
+|---|---|
+| `/` | Marketing site — static, no React, no login |
+| `/app` | The React app: sign up, log in, post and join trips |
+
 ### 2. Run it — no backend required
 
 ```bash
@@ -24,7 +31,9 @@ rider, driver and admin — is fully browsable, and a banner marks the session a
 demo. Sign in with any `@ufl.edu` email and any password; the admin PIN is `2580`.
 Demo data resets on reload.
 
-To connect a real backend, follow the steps below.
+Demo mode is fine for showing the app off, but **accounts do not persist** —
+everything lives in memory and resets on reload. For real sign-ups and logins,
+connect Supabase using the steps below.
 
 ### 3. Set up Supabase
 1. Go to [supabase.com](https://supabase.com) and create a free project
@@ -61,6 +70,12 @@ Open [http://localhost:5173](http://localhost:5173)
 
 ```
 drivah/
+├── index.html                   # Marketing site (/) — ships no React
+├── site/
+│   ├── site.css                 # Landing page styles, tokens mirror theme.js
+│   └── site.js                  # Fuel-split calculator + scroll reveals
+├── app/
+│   └── index.html               # App entry (/app)
 ├── src/
 │   ├── App.jsx                  # Root auth controller
 │   ├── supabase.js              # Supabase client (falls back to demo mode)
@@ -77,9 +92,9 @@ drivah/
 │       └── Apps.jsx             # RiderApp, DriverApp, AdminPlatform
 ├── drivah-schema.sql            # Full Supabase database schema
 ├── .env.example                 # Environment variable template
+├── netlify.toml                 # Build, routing, CSP, cache headers
 ├── vercel.json                  # SPA rewrites + build config
-├── index.html
-├── vite.config.js
+├── vite.config.js               # Two entry points: site and app
 └── package.json
 ```
 
@@ -122,6 +137,23 @@ drivah/
   riders are told when a trip is cancelled
 - **Detour toggle** — drivers can signal flexibility
 - **Admin PIN gate** — a second step in front of the admin dashboard
+
+---
+
+## Real accounts
+
+Sign-up and login only persist once Supabase is connected. In short:
+
+1. Create a project at [supabase.com](https://supabase.com)
+2. Run `drivah-schema.sql` in the SQL editor
+3. Set the UFID salt: `alter database postgres set app.ufid_salt = '...'`
+4. Add `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` to your host's
+   environment variables, then **redeploy** — Vite bakes these in at build
+   time, so a restart alone will not pick them up
+5. In Supabase → Authentication → URL Configuration, add your site URL to the
+   redirect allow-list so password-reset links come back to `/app/reset-password`
+
+Until step 4 is done the deployed site runs in demo mode, banner and all.
 
 ---
 

@@ -141,7 +141,11 @@ export function ForgotScreen({ role, onBack }) {
     if (!email || (role !== 'admin' && !isUFEmail(email))) { notify('Enter a valid @ufl.edu email'); return }
     setLoading(true)
     try {
-      const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: `${window.location.origin}/reset-password` })
+      // The app is served under /app, so the recovery link has to come back
+      // there — /reset-password at the root is the marketing site.
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: `${window.location.origin}/app/reset-password`,
+      })
       if (error) throw error
       setSent(true)
     } catch (err) { notify(err.message) }
