@@ -1,7 +1,7 @@
 # Netlify configuration for DRIVAH
 #
-# Unlike impressivebite, this repo is a Vite app rather than a static site, so
-# Netlify runs the build and publishes the output directory.
+# This is a Vite project, so Netlify runs the build and publishes the output
+# directory rather than serving the repo root.
 #
 # Environment variables decide what gets deployed. With none set, the build
 # ships demo mode — a self-contained in-memory backend, which is what you want
@@ -17,14 +17,18 @@
 [build.environment]
   NODE_VERSION = "20"
 
-# --- SPA routing ------------------------------------------------------------
-# The password-reset email links to /reset-password. There is no router and no
-# such file on disk, so without this rewrite that link would 404 before the app
-# ever booted and could read the recovery token out of the URL fragment.
+# --- Routing ----------------------------------------------------------------
+# / is the marketing site; the React app is a single-page app mounted at /app.
+# Only /app/* is rewritten, so a typo elsewhere still 404s honestly instead of
+# silently rendering the homepage.
+#
+# This rewrite is what makes password recovery work: the reset email links to
+# /app/reset-password, which is not a file on disk, so without it the link would
+# 404 before the app could read the recovery token out of the URL fragment.
 
 [[redirects]]
-  from = "/*"
-  to = "/index.html"
+  from = "/app/*"
+  to = "/app/index.html"
   status = 200
 
 # --- Security headers -------------------------------------------------------
@@ -53,9 +57,8 @@
 
 # --- Caching ----------------------------------------------------------------
 # Vite content-hashes asset filenames (index-CRAcEP8g.js), so a changed file is
-# a changed URL and these can be cached immutably — the one-day ceiling that
-# impressivebite needs does not apply here. index.html must always revalidate,
-# since it is what points at the current hashed bundle.
+# always a changed URL and these can be cached immutably. index.html must always
+# revalidate, since it is what points at the current hashed bundle.
 
 [[headers]]
   for = "/assets/*"
@@ -64,6 +67,11 @@
 
 [[headers]]
   for = "/index.html"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+
+[[headers]]
+  for = "/app/*"
   [headers.values]
     Cache-Control = "public, max-age=0, must-revalidate"
 

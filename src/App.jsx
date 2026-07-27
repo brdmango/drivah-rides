@@ -13,6 +13,17 @@ import { RiderApp, DriverApp, AdminPlatform } from './screens/Apps.jsx'
 const hasRecoveryToken = () =>
   typeof window !== 'undefined' && /type=recovery/.test(window.location.hash)
 
+/* The marketing site links straight to a role's sign-in or sign-up
+   (/app/?role=driver&signup=1), so a "Create account" button lands on the form
+   instead of dropping people back on the role picker. */
+const entryFromUrl = () => {
+  if (typeof window === 'undefined') return null
+  const q = new URLSearchParams(window.location.search)
+  const role = q.get('role')
+  if (role !== 'rider' && role !== 'driver' && role !== 'admin') return null
+  return { role, signup: q.get('signup') === '1' && role !== 'admin' }
+}
+
 export default function App() {
   const [stage,   setStage]   = useState('loading')
   const [role,    setRole]    = useState(null)
@@ -28,6 +39,12 @@ export default function App() {
     const checkSession = async () => {
       if (hasRecoveryToken()) { setStage('resetPassword'); return }
 
+      const entry = entryFromUrl()
+      if (entry) {
+        setRole(entry.role)
+        if (isDemo) setDemoRole(entry.role)
+      }
+
       const { data: { session } } = await supabase.auth.getSession()
       if (session?.user) {
         const { data: prof } = await supabase
@@ -40,6 +57,10 @@ export default function App() {
           setStage(stageFor(prof))
           return
         }
+      }
+      if (entry) {
+        setStage(entry.signup ? 'signup' : entry.role === 'admin' ? 'adminLogin' : 'login')
+        return
       }
       setStage('role')
     }
